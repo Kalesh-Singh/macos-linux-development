@@ -291,7 +291,7 @@ SSH Setup
 ```sh
 $ cat metadata.yaml
 instance-id: iid-local01
-local-hostname: qemu-x86_64
+local-hostname: qemu-x86-64
 ```
 
 ```sh
