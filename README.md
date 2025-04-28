@@ -244,3 +244,164 @@ Now you can conveniently ssh to the machine using the below command.
 ```sh
 ssh qemu-arm64
 ```
+
+## Qemu x86_64 (amd64) setup
+
+We will be repeating most of what was done for arm64, so I'll omit previous descriptions to keep this succinct.
+
+```sh
+qemu-img create -f qcow2 -o preallocation=metadata ubuntu_amd64_rootfs.qcow2 20G
+```
+
+```sh
+virt-filesystems --long -h --all -a ubuntu-24.10-minimal-cloudimg-amd64.img
+```
+
+Output:
+```sh
+Name       Type       VFS     Label           MBR Size  Parent
+/dev/sda1  filesystem ext4    cloudimg-rootfs -   2.2G  -
+/dev/sda13 filesystem ext4    BOOT            -   988M  -
+/dev/sda14 filesystem unknown -               -   4.0M  -
+/dev/sda15 filesystem vfat    UEFI            -   104M  -
+/dev/sda1  partition  -       -               -   2.4G  /dev/sda
+/dev/sda13 partition  -       -               -   1023M /dev/sda
+/dev/sda14 partition  -       -               -   4.0M  /dev/sda
+/dev/sda15 partition  -       -               -   106M  /dev/sda
+/dev/sda   device     -       -               -   3.5G  -
+```
+
+cloud roofts in on `/dev/sda1` partition. Expand it onto our rootfs.
+
+```sh
+virt-resize --expand /dev/sda1 ubuntu-24.10-minimal-cloudimg-amd64.img ubuntu_amd64_rootfs.qcow2
+```
+
+Reinstall grub.
+
+Note that, the host cpu (aarch64) and guest arch (x86_64) are not  compatible, so we cannot use command line options that involve running commands in the guest.  Use `--firstboot` scripts instead, which queues up scripts that will be executed inside the guest when it first boots.
+
+
+```sh
+virt-customize -a ubuntu_amd64_rootfs.qcow2 --firstboot-command 'grub-install /dev/sda'
+```
+
+SSH Setup
+
+```sh
+$ cat metadata.yaml
+instance-id: iid-local01
+local-hostname: qemu-x86_64
+```
+
+```sh
+$ cat user-data.yaml
+#cloud-config
+users:
+  - name: kalesh # Replace this with your own user
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    groups: sudo
+    shell: /bin/bash
+    ssh_authorized_keys:
+```
+
+```sh
+echo "      - $(cat ~/.ssh/id_rsa.pub)" >> userdata.yaml
+```
+
+```sh
+cloud-localds seed-x86_64.img user-data.yaml metadata.yaml
+```
+
+Configure x86_64 kernel build
+
+```sh
+make -j`nproc` LLVM=1 LLVM_IAS=1 CC=clang ARCH=x86_64 defconfig
+
+./scripts/config --file .config \
+    -e VIRTIO_BLK \
+    -e VIRTIO_NET \
+    -e HW_RANDOM_VIRTIO \
+    -e AUTOFS4_FS \
+    -e NET_FAILOVER \
+    -e VIRTIO_PCI_LIB \
+    -e FAILOVER \
+    -e DEVTMPFS \
+    -e DEVTMPFS_MOUNT \
+    -e VFIO_PLATFORM \
+    -e ISO9660_FS
+
+make -j`nproc` LLVM=1 LLVM_IAS=1 CC=clang ARCH=x86_64 olddefconfig
+```
+
+Build it
+
+```sh
+sudo apt install libelf-dev
+```
+
+```sh
+make -j`nproc` LLVM=1 LLVM_IAS=1 CC=clang ARCH=x86_64
+```
+
+Check your rootfs image to identify the rootfs partition.
+
+```sh
+virt-df -h -a ubuntu_amd64_rootfs.qcow2
+```
+
+Output
+
+```sh
+Filesystem                                Size       Used  Available  Use%
+ubuntu_amd64_rootfs.qcow2:/dev/sda1       988M        44M       877M    5%
+ubuntu_amd64_rootfs.qcow2:/dev/sda3       104M       6.1M        98M    6%
+ubuntu_amd64_rootfs.qcow2:/dev/sda4        18G       475M        18G    3%
+```
+
+The rootfs partition is `/dev/sda4`. This will be specified as `/dev/vda4` when booting qemu.
+
+```sh
+qemu-system-x86_64 \
+    -machine type=q35 \
+    -accel tcg \
+    -smp 8 \
+    -m 8G \
+    -nographic \
+    -device virtio-serial-pci \
+    -device virtio-net-pci,netdev=net0 \
+    -netdev user,id=net0,hostfwd=tcp::3333-:22 \
+    -drive if=virtio,format=qcow2,file=ubuntu_amd64_rootfs.qcow2 \
+    -drive if=virtio,format=raw,file=seed-x86_64.img \
+    -kernel <linux>/arch/x86_64/boot/bzImage \
+    -append "console=ttyS0 root=/dev/vda4 rw"
+```
+
+Add the following to your `~/.ssh/config` file.
+
+```sh
+cat <<EOF >> ~/.ssh/config
+
+Host qemu-x86_64
+  HostName localhost
+  Port 3333
+  User kalesh
+  IdentityFile ~/.ssh/id_rsa
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+EOF
+```
+
+Now you can conveniently ssh to the machine using the below command.
+
+```sh
+ssh qemu-x86_64
+```
+
+------
+
+# Notes
+
+Using orbstack we don't get nested virtualization (KVM) which is avialable on M3 and later chipsets. [Parallels does seem to support this](https://docs.parallels.com/parallels-desktop-developers-guide/software-development-specific-functions-of-parallels-desktop/nested-virtualization-support), but performance of the test VMs isn't really a big issue and overall I prefer the seamless integration of Orbstack with native tools like VS Code over the dedicated VM experience from Parallels.
+
+[Orbstack does seem to have plans for adding this support as well](https://github.com/orbstack/orbstack/issues/1504), so I'll wait for that ...
