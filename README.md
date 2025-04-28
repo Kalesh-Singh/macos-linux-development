@@ -117,13 +117,18 @@ local-hostname: qemu-arm64
 ```sh
 $ cat user-data.yaml
 #cloud-config
-ssh_authorized_keys:
+users:
+  - name: kalesh # Replace this with your own user
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    groups: sudo
+    shell: /bin/bash
+    ssh_authorized_keys:
 ```
 
-Add your public rsa key to the list of authorized keys.
+Add your public rsa key to the list of authorized keys for the user.
 
 ```sh
-echo " - $(cat ~/.ssh/id_rsa.pub)" >> userdata.yaml
+echo "      - $(cat ~/.ssh/id_rsa.pub)" >> userdata.yaml
 ```
 
 Now that we have these files in place, create `seed.img`
@@ -203,13 +208,39 @@ qemu-system-aarch64 \
     -M virt \
     -accel tcg \
     -cpu cortex-a72 \
+    -smp 8 \
     -m 8G \
-    -smp 4 \
     -nographic \
-    -drive file=ubuntu_arm64_rootfs.qcow2,if=none,id=hd0,format=qcow2 \
-    -device virtio-blk-device,drive=hd0 \
+    -device virtio-serial-pci \
+    -device virtio-net-pci,netdev=net0 \
+    -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+    -drive if=virtio,format=qcow2,file=ubuntu_arm64_rootfs.qcow2 \
+    -drive if=virtio,format=raw,file=seed.img \
     -kernel <linux>/arch/arm64/boot/Image \
     -append "console=ttyAMA0 root=/dev/vda3 rw"
 ```
 
 Note: that we aren't able to use KVM since mac doesn't expose this capabillity to our Orbstack VM so `/dev/kvm` isn't available. We fallback to `tcg` acceleration.
+
+## SSH to the Qemu Instance
+
+Add the following to your `~/.ssh/config` file.
+
+```sh
+cat <<EOF >> ~/.ssh/config
+
+Host qemu-arm64
+  HostName localhost
+  Port 2222
+  User kalesh
+  IdentityFile ~/.ssh/id_rsa
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+EOF
+```
+
+Now you can conveniently ssh to the machine using the below command.
+
+```sh
+ssh qemu-arm64
+```
