@@ -131,10 +131,10 @@ Add your public rsa key to the list of authorized keys for the user.
 echo "      - $(cat ~/.ssh/id_rsa.pub)" >> userdata.yaml
 ```
 
-Now that we have these files in place, create `seed.img`
+Now that we have these files in place, create `seed-arm64.img`
 
 ```sh
-cloud-localds seed.img user-data.yaml metadata.yaml
+cloud-localds seed-arm64.img user-data.yaml metadata.yaml
 ```
 
 ## Get the Linux kernel source
@@ -215,7 +215,7 @@ qemu-system-aarch64 \
     -device virtio-net-pci,netdev=net0 \
     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
     -drive if=virtio,format=qcow2,file=ubuntu_arm64_rootfs.qcow2 \
-    -drive if=virtio,format=raw,file=seed.img \
+    -drive if=virtio,format=raw,file=seed-arm64.img \
     -kernel <linux>/arch/arm64/boot/Image \
     -append "console=ttyAMA0 root=/dev/vda3 rw"
 ```
